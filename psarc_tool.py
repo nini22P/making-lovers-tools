@@ -54,7 +54,6 @@ def create_psarc(args):
 
     working_dir = os.path.dirname(input_txt)
     list_filename = os.path.basename(input_txt)
-    psarc_filename = os.path.basename(final_output_path)
 
     print(f"--- [CREATING] ---")
     print(f"Using list: {list_filename}")
@@ -63,7 +62,7 @@ def create_psarc(args):
     cmd = f'psarc create -i --overwrite --inputfile="{list_filename}"'
     
     if run_command(cmd, cwd=working_dir) is not None:
-        temp_output = os.path.join(working_dir, psarc_filename)
+        temp_output = os.path.join(working_dir, list_filename.replace(".txt", ".psarc"))
         
         if temp_output != final_output_path:
             print(f"Moving: {temp_output} -> {final_output_path}")
