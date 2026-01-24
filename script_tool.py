@@ -8,6 +8,7 @@ from collections import OrderedDict, defaultdict
 NAME_PATTERN = re.compile(r'<name\s(.+?)>')
 TEXT_PATTERN = re.compile(r'<text\s(.+?)>')
 SELECT_PATTERN = re.compile(r'<select\s(.+?)>')
+SELECT_PREFIX_PATTERN = re.compile(r'^(\s*(?:\d+\s*:\s*)?)')
 
 class ScriptTool:
     def get_files(self, directory):
@@ -39,7 +40,7 @@ class ScriptTool:
                 text_match = TEXT_PATTERN.search(line)
                 if text_match:
                     raw_content = text_match.group(1).strip()
-                    if raw_content.endswith('>'):
+                    if raw_content.endswith('>'): 
                         raw_content = raw_content[:-1]
                     
                     speaker_name = ""
@@ -64,25 +65,38 @@ class ScriptTool:
                 select_match = SELECT_PATTERN.search(line)
                 if select_match:
                     raw_content = select_match.group(1).strip()
-                    if raw_content.endswith('>'):
+                    if raw_content.endswith('>'): 
                         raw_content = raw_content[:-1]
                     
                     parts = raw_content.split(',')
+                    select_idx = 0
+
                     for part in parts:
-                        if ':' in part:
+                        clean_part = part.strip()
+                        
+                        if clean_part.isdigit():
+                            continue
+
+                        original_text = clean_part
+                        
+                        if ':' in clean_part:
                             try:
-                                opt_id, opt_text = part.split(':', 1)
-                                if opt_id.isdigit() and opt_text.strip():
-                                    data_rows.append(OrderedDict([
-                                        ('type', 'SELECT'),
-                                        ('source', file_name),
-                                        ('line', line_num),
-                                        ('context', opt_id),
-                                        ('original', opt_text),
-                                        ('translation', ''),
-                                    ]))
+                                pre, txt = clean_part.split(':', 1)
+                                if pre.strip().isdigit():
+                                    original_text = txt.strip()
                             except:
                                 pass
+                        
+                        if original_text:
+                            data_rows.append(OrderedDict([
+                                ('type', 'SELECT'),
+                                ('source', file_name),
+                                ('line', line_num),
+                                ('context', str(select_idx)),
+                                ('original', original_text),
+                                ('translation', ''),
+                            ]))
+                            select_idx += 1
 
         final_data = []
         
@@ -140,8 +154,8 @@ class ScriptTool:
                     elif r_type == 'SELECT':
                         src = row.get('source')
                         line = int(row.get('line', 0))
-                        opt_id = row.get('context')
-                        select_map[src][line][opt_id] = translation
+                        idx_str = row.get('context')
+                        select_map[src][line][idx_str] = translation
         except Exception as e:
             print(f"Failed to load CSV: {e}")
             return
@@ -188,23 +202,36 @@ class ScriptTool:
                     sm = SELECT_PATTERN.search(line)
                     if sm:
                         raw_content = sm.group(1).strip()
-                        if raw_content.endswith('>'):
+                        if raw_content.endswith('>'): 
                             raw_content = raw_content[:-1]
                         
                         parts = raw_content.split(',')
                         new_parts = []
-                        for part in parts:
-                            processed = part
-                            if ':' in part:
-                                try:
-                                    pid, ptxt = part.split(':', 1)
-                                    if pid in file_selects[line_num]:
-                                        trans_opt = file_selects[line_num][pid]
-                                        processed = f"{pid}:{trans_opt}"
-                                except:
-                                    pass
-                            new_parts.append(processed)
+                        select_idx = 0
                         
+                        for part in parts:
+                            clean_part = part.strip()
+                            current_part = part 
+
+                            if clean_part.isdigit():
+                                new_parts.append(current_part)
+                                continue
+                            
+                            idx_str = str(select_idx)
+                            
+                            if idx_str in file_selects[line_num]:
+                                trans_text = file_selects[line_num][idx_str]
+                                
+                                prefix_match = SELECT_PREFIX_PATTERN.match(part)
+                                if prefix_match:
+                                    prefix = prefix_match.group(1)
+                                    current_part = prefix + trans_text
+                                else:
+                                    current_part = trans_text
+                            
+                            new_parts.append(current_part)
+                            select_idx += 1
+
                         joined_content = ",".join(new_parts)
                         new_lines[i] = SELECT_PATTERN.sub(f'<select {joined_content}>', new_lines[i])
 
