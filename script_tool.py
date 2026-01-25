@@ -9,6 +9,9 @@ NAME_PATTERN = re.compile(r'<name\s(.+?)>')
 TEXT_PATTERN = re.compile(r'<text\s(.+?)>')
 SELECT_PATTERN = re.compile(r'<select\s(.+?)>')
 SELECT_PREFIX_PATTERN = re.compile(r'^(\s*(?:\d+\s*:\s*)?)')
+TAG_NAME_PATTERN = re.compile(r'<(\w+)')
+
+IGNORE_TYPES = {'farcall', 'effect'}
 
 class ScriptTool:
     def get_files(self, directory):
@@ -21,9 +24,10 @@ class ScriptTool:
             return
 
         print(f"Extracting from '{input_dir}'...")
-        
         unique_names = set()
         data_rows = []
+        warned_types = set()
+        
 
         for file_path in files:
             file_name = os.path.basename(file_path)
@@ -36,9 +40,11 @@ class ScriptTool:
 
             for i, line in enumerate(lines):
                 line_num = i + 1
+                handled = False
                 
                 text_match = TEXT_PATTERN.search(line)
                 if text_match:
+                    handled = True
                     raw_content = text_match.group(1).strip()
                     if raw_content.endswith('>'): 
                         raw_content = raw_content[:-1]
@@ -64,6 +70,7 @@ class ScriptTool:
 
                 select_match = SELECT_PATTERN.search(line)
                 if select_match:
+                    handled = True
                     raw_content = select_match.group(1).strip()
                     if raw_content.endswith('>'): 
                         raw_content = raw_content[:-1]
@@ -97,6 +104,18 @@ class ScriptTool:
                                 ('translation', ''),
                             ]))
                             select_idx += 1
+
+                if not handled:
+                    if NAME_PATTERN.search(line):
+                        handled = True
+                
+                if not handled:
+                    if any(ord(c) > 127 for c in line):
+                        tag_match = TAG_NAME_PATTERN.search(line)
+                        tag_type = tag_match.group(1) if tag_match else "UNKNOWN"
+                        if tag_type not in warned_types and tag_type not in IGNORE_TYPES:
+                            print(f"[WARNING] Unhandled non-ASCII content in type '<{tag_type}>' (e.g., at {file_name}:{line_num})")
+                            warned_types.add(tag_type)
 
         final_data = []
         
