@@ -60,9 +60,9 @@ class ScriptTool:
 
                     if raw_content:
                         data_rows.append(OrderedDict([
-                            ('type', 'TEXT'),
                             ('source', file_name),
                             ('line', line_num),
+                            ('type', 'TEXT'),
                             ('context', speaker_name),
                             ('original', raw_content),
                             ('translation', ''),
@@ -96,9 +96,9 @@ class ScriptTool:
                         
                         if original_text:
                             data_rows.append(OrderedDict([
-                                ('type', 'SELECT'),
                                 ('source', file_name),
                                 ('line', line_num),
+                                ('type', 'SELECT'),
                                 ('context', str(select_idx)),
                                 ('original', original_text),
                                 ('translation', ''),
@@ -122,9 +122,9 @@ class ScriptTool:
         print(f"Extracted {len(unique_names)} unique names.")
         for name in sorted(list(unique_names)):
             final_data.append(OrderedDict([
-                ('type', 'NAME'),
                 ('source', ''),
                 ('line', ''),
+                ('type', 'NAME'),
                 ('context', ''),
                 ('original', name),
                 ('translation', ''),
@@ -135,7 +135,7 @@ class ScriptTool:
 
         try:
             with open(output_csv, 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ['type', 'source', 'line', 'context', 'original', 'translation']
+                fieldnames = ['source', 'line', 'type', 'context', 'original', 'translation']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(final_data)
