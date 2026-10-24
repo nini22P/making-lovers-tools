@@ -4,6 +4,9 @@ import argparse
 import shutil
 import sys
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PSARC = os.path.join(SCRIPT_DIR, "psarc.exe" if os.name == "nt" else "psarc")
+
 def run_command(command, cwd=None):
     try:
         result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True, cwd=cwd)
@@ -29,10 +32,10 @@ def extract_psarc(args):
         os.makedirs(output_path)
 
     print(f"Extracting to: {output_path}")
-    run_command(f'psarc extract "{input_path}" --to="{output_path}"')
+    run_command(f'"{PSARC}" extract "{input_path}" --to="{output_path}"')
 
     print(f"Generating list: {list_file}")
-    output = run_command(f'psarc list "{input_path}"')
+    output = run_command(f'"{PSARC}" list "{input_path}"')
     
     if output:
         lines = output.splitlines()
@@ -59,7 +62,7 @@ def create_psarc(args):
     print(f"Using list: {list_filename}")
     print(f"Working directory: {working_dir}")
     
-    cmd = f'psarc create -i --overwrite --inputfile="{list_filename}"'
+    cmd = f'"{PSARC}" create -i --overwrite --inputfile="{list_filename}"'
     
     if run_command(cmd, cwd=working_dir) is not None:
         temp_output = os.path.join(working_dir, list_filename.replace(".txt", ".psarc"))
