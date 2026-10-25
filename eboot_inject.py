@@ -6,94 +6,21 @@ from keystone import Ks, KsError, KS_ARCH_ARM, KS_MODE_THUMB
 
 ARCHIVE_MOUNT = 0x81051768
 GET_MOUNT_BUFFER_SIZE = 0x81051788
-FH_OPEN = 0x81051758
-FH_CLOSE = 0x810516A8
-SPRINTF = 0x81051A48
-STRCPY = 0x81051A68
 ALLOC = 0x81007122
 
-# All-zero gaps in the .text data block. No movw/movt, 32-bit pointer or PC-relative
-# reference points into them, unlike the 13x16 zero tables at 0x81057DF0/0x81057F2C.
-PATH_HELPER_VA = 0x8106518E
-PATH_CAVE_END = 0x810652C0
+# All-zero gap in the .text data block. No movw/movt, 32-bit pointer or PC-relative
+# reference points into it, unlike the 13x16 zero tables at 0x81057DF0/0x81057F2C.
 MOUNT_HELPER_VA = 0x81066B92
 MOUNT_CAVE_END = 0x81066CC2
 
-# Unreferenced dword in the .data padding below 0x810732F4; set to 1 once patch.psarc is mounted.
-# It is addressed as a PC-relative delta from the payload, never as an absolute address.
-MOUNT_FLAG = 0x810732E4
-
 HOOKS = (
     (0x81007990, ARCHIVE_MOUNT, MOUNT_HELPER_VA),
-    (0x81007A06, SPRINTF, PATH_HELPER_VA),
-    (0x81007CC4, SPRINTF, PATH_HELPER_VA),
-    (0x81007EAE, SPRINTF, PATH_HELPER_VA),
 )
 
 # Import stubs are ARM (blx); the game allocator is Thumb (bl).
-PATH_HELPER_ASM = """
-.thumb
-.equ sprintf_stub, __SPRINTF__
-.equ strcpy_stub, __STRCPY__
-.equ fh_open_stub, __FH_OPEN__
-.equ fh_close_stub, __FH_CLOSE__
-path_helper:
-    push {lr}
-    sub sp, #0x12c
-    str r0, [sp, #0x110]
-    str r1, [sp, #0x114]
-    str r2, [sp, #0x118]
-    str r3, [sp, #0x11c]
-    bl get_flag
-    ldr r0, [r0]
-    cmp r0, #0
-    beq path_fallback
-    bl get_patch_root
-    mov r2, r0
-    mov r0, sp
-    ldr r1, [sp, #0x114]
-    ldr r3, [sp, #0x11c]
-    blx sprintf_stub
-    movs r0, #0
-    add r1, sp, #0x120
-    mov r2, sp
-    movs r3, #0
-    blx fh_open_stub
-    cmp r0, #0
-    blt path_fallback
-    movs r0, #0
-    ldr r1, [sp, #0x120]
-    blx fh_close_stub
-    ldr r0, [sp, #0x110]
-    mov r1, sp
-    blx strcpy_stub
-    b path_done
-path_fallback:
-    ldr r0, [sp, #0x110]
-    ldr r1, [sp, #0x114]
-    ldr r2, [sp, #0x118]
-    ldr r3, [sp, #0x11c]
-    blx sprintf_stub
-path_done:
-    add sp, #0x12c
-    pop {pc}
-// adr helpers must stay after all bl/blx; Keystone otherwise shifts their fixups.
-get_flag:
-    adr r0, flag_ref
-    movw r1, #__FLAGDELTA_LO__
-    movt r1, #__FLAGDELTA_HI__
-    add r0, r0, r1
-    bx lr
-get_patch_root:
-    adr r0, patch_root
-    bx lr
-patch_root:
-    .ascii "/archive/patch/"
-    .byte 0
-flag_ref:
-    .word 0
-"""
-
+# patch.psarc is mounted at the same mount point as data_00.psarc: FIOS resolves
+# archives sharing a mount point in mount order, so patched files win and missing
+# files fall through to data_00 without a separate path probe.
 MOUNT_HELPER_ASM = """
 .thumb
 .equ archive_mount_stub, __ARCHIVE_MOUNT__
@@ -144,23 +71,11 @@ mount_patch:
     bl get_mount_point
     mov r3, r0
     movs r0, #0
-    // r0 still holds the mount-point pointer; attr must be NULL.
     blx archive_mount_stub
     add sp, #0x10
-    cmp r0, #0
-    bne mount_done
-    bl get_flag
-    movs r1, #1
-    str r1, [r0]
 mount_done:
     pop {r4-r6, pc}
 // adr helpers must stay after all bl/blx; Keystone otherwise shifts their fixups.
-get_flag:
-    adr r0, flag_ref
-    movw r1, #__FLAGDELTA_LO__
-    movt r1, #__FLAGDELTA_HI__
-    add r0, r0, r1
-    bx lr
 get_patch_path:
     adr r0, patch_path
     bx lr
@@ -171,25 +86,16 @@ patch_path:
     .ascii "app0:data/patch.psarc"
     .byte 0
 mount_point:
-    .ascii "/archive/patch/"
+    .ascii "/archive/data_00/"
     .byte 0
-flag_ref:
-    .word 0
 """
 
 
-def expand_assembly(template, flag_delta):
-    delta = flag_delta & 0xFFFFFFFF
+def expand_assembly(template):
     replacements = {
         "__ARCHIVE_MOUNT__": f"0x{ARCHIVE_MOUNT:08X}",
         "__GET_MOUNT_BUFFER_SIZE__": f"0x{GET_MOUNT_BUFFER_SIZE:08X}",
-        "__FH_OPEN__": f"0x{FH_OPEN:08X}",
-        "__FH_CLOSE__": f"0x{FH_CLOSE:08X}",
-        "__SPRINTF__": f"0x{SPRINTF:08X}",
-        "__STRCPY__": f"0x{STRCPY:08X}",
         "__ALLOC__": f"0x{ALLOC:08X}",
-        "__FLAGDELTA_LO__": f"0x{delta & 0xFFFF:04X}",
-        "__FLAGDELTA_HI__": f"0x{delta >> 16:04X}",
     }
     for name, value in replacements.items():
         template = template.replace(name, value)
@@ -229,29 +135,20 @@ def va_to_offset(segments, va, size):
 
 
 def build_payload(template, va):
-    code = assemble(expand_assembly(template, 0), va)
-    delta = MOUNT_FLAG - (va + len(code) - 4)
-    resolved = assemble(expand_assembly(template, delta), va)
-    if len(resolved) != len(code):
-        raise ValueError(f"payload at 0x{va:08X} changed size while resolving the flag delta")
-    return resolved
+    return assemble(expand_assembly(template), va)
 
 
 def patch(data):
     segments = load_segments(data)
     patched = bytearray(data)
 
-    for asm, va, cave_end in (
-        (PATH_HELPER_ASM, PATH_HELPER_VA, PATH_CAVE_END),
-        (MOUNT_HELPER_ASM, MOUNT_HELPER_VA, MOUNT_CAVE_END),
-    ):
-        code = build_payload(asm, va)
-        if va + len(code) > cave_end:
-            raise ValueError(f"payload at 0x{va:08X} does not fit")
-        offset = va_to_offset(segments, va, len(code))
-        if any(patched[offset:offset + len(code)]):
-            raise ValueError(f"code cave at 0x{va:08X} is not empty")
-        patched[offset:offset + len(code)] = code
+    code = build_payload(MOUNT_HELPER_ASM, MOUNT_HELPER_VA)
+    if MOUNT_HELPER_VA + len(code) > MOUNT_CAVE_END:
+        raise ValueError(f"payload at 0x{MOUNT_HELPER_VA:08X} does not fit")
+    offset = va_to_offset(segments, MOUNT_HELPER_VA, len(code))
+    if any(patched[offset:offset + len(code)]):
+        raise ValueError(f"code cave at 0x{MOUNT_HELPER_VA:08X} is not empty")
+    patched[offset:offset + len(code)] = code
 
     for address, original_target, helper_va in HOOKS:
         original = assemble(f"blx 0x{original_target:08X}", address)
